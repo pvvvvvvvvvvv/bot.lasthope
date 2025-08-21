@@ -65,7 +65,7 @@ class MilestoneBot:
 
             if not self.milestone_loop.is_running():
                 self.milestone_loop.start()
-            await ctx.send("milestone bot started - made by PAWINCEE-")
+            await ctx.send("milestone bot started")
 
         @self.bot.command(name='stopms')
         async def stop_milestone(ctx):
