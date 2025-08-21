@@ -3,11 +3,10 @@ from threading import Thread
 import os
 from discord.ext import commands, tasks
 import discord
-import random
 import requests
-import re
+import random
 import asyncio
-from bs4 import BeautifulSoup
+import logging
 
 # === Keep-alive server ===
 app = Flask('')
@@ -36,6 +35,9 @@ class MilestoneBot:
         self.current_visits = 0
         self.milestone_goal = 3358
 
+        # Enable debug logging
+        logging.basicConfig(level=logging.INFO)
+
         self.setup_events()
         self.setup_commands()
 
@@ -54,15 +56,15 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
-            # Send only the start message once
+            # Send only the start message
             await ctx.send("Milestone bot started")
 
-            # Send the first milestone update immediately
+            # Send first milestone update immediately
             await self.send_milestone_update()
 
-            # Start the loop AFTER the first message interval
+            # Start the loop for subsequent updates
             if not self.milestone_loop.is_running():
-                self.milestone_loop.start(delay_first=True)  # start loop with delay
+                self.milestone_loop.start(delay_first=True)
 
         @self.bot.command(name='stopms')
         async def stop_milestone(ctx):
@@ -75,57 +77,80 @@ class MilestoneBot:
             await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
-        """Scrape live active players and visits from the Roblox game page"""
+        """Fetches total active players from all servers and accurate visits"""
         try:
-            url = f"https://www.roblox.com/games/{self.place_id}"
             headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, headers=headers, timeout=10)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.content, "html.parser")
 
-            # Get visits number safely
-            visits_text = soup.find(text=re.compile(r"[\d,]+ Visits"))
-            if visits_text:
-                visits_number = int(re.search(r"([\d,]+)", visits_text.replace(",", "")).group(1))
-            else:
-                visits_number = self.current_visits  # fallback
+            # Step 1: Get universe ID
+            universe_resp = requests.get(
+                f"https://apis.roblox.com/universes/v1/places/{self.place_id}/universe",
+                headers=headers, timeout=10
+            )
+            universe_resp.raise_for_status()
+            universe_id = universe_resp.json().get("universeId")
+            logging.info(f"Universe ID: {universe_id}")
 
-            # Get active players number safely
-            playing_text = soup.find(text=re.compile(r"[\d,]+ playing"))
-            if playing_text:
-                playing_number = int(re.search(r"([\d,]+)", playing_text.replace(",", "")).group(1))
-            else:
-                playing_number = random.randint(10, 25)
+            if not universe_id:
+                raise Exception("Could not get universe ID")
 
-            # Never decrease visits
-            self.current_visits = max(self.current_visits, visits_number)
-            return playing_number, self.current_visits
+            # Step 2: Get game details for visits
+            game_resp = requests.get(
+                f"https://games.roblox.com/v1/games?universeIds={universe_id}",
+                headers=headers, timeout=10
+            )
+            game_resp.raise_for_status()
+            game_data = game_resp.json()["data"][0]
+            visits = game_data.get("visits", 0)
+            logging.info(f"Total visits: {visits}")
+
+            # Step 3: Get servers for total players
+            total_players = 0
+            servers_url = f"https://games.roblox.com/v1/games/{self.place_id}/servers/Public?sortOrder=Asc&limit=100"
+            while servers_url:
+                server_resp = requests.get(servers_url, headers=headers, timeout=10)
+                server_resp.raise_for_status()
+                server_data = server_resp.json()
+                players = sum(server.get("playing", 0) for server in server_data.get("data", []))
+                total_players += players
+                logging.info(f"Fetched {len(server_data.get('data', []))} servers, total players now {total_players}")
+                # Pagination
+                servers_url = server_data.get("nextPageCursor")
+                if servers_url:
+                    servers_url = f"https://games.roblox.com/v1/games/{self.place_id}/servers/Public?cursor={servers_url}&limit=100"
+
+            self.current_visits = max(self.current_visits, visits)
+            return total_players, self.current_visits
 
         except Exception as e:
-            print(f"Error fetching live data: {e}")
-            # fallback to last known values
+            logging.error(f"Error fetching Roblox data: {e}")
+            # fallback values
             return random.randint(10, 25), max(3258, self.current_visits)
 
     async def send_milestone_update(self):
         if not self.target_channel or not self.is_running:
             return
 
-        playing, visits = self.get_game_data()
+        players, visits = self.get_game_data()
         if visits >= self.milestone_goal:
             self.milestone_goal = visits + random.choice([100, 150])
+            logging.info(f"New milestone goal: {self.milestone_goal}")
 
         message = f"""--------------------------------------------------
-👤🎮 Active players: {playing}
+👤🎮 Active players: {players}
 --------------------------------------------------
 👥 Visits: {visits:,}
 🎯 Next milestone: {visits:,}/{self.milestone_goal:,}
 --------------------------------------------------"""
-        await self.target_channel.send(message)
+        try:
+            await self.target_channel.send(message)
+            logging.info(f"Sent milestone update: {players} players, {visits} visits")
+        except Exception as e:
+            logging.error(f"Failed to send Discord message: {e}")
 
     @tasks.loop(seconds=65)
     async def milestone_loop(self):
-        """Main loop for milestone updates. Starts after first message to prevent duplicates."""
-        await asyncio.sleep(1)
+        """Loop for milestone updates."""
+        await asyncio.sleep(1)  # slight delay to prevent rate-limit
         await self.send_milestone_update()
 
     def run(self):
@@ -134,10 +159,10 @@ class MilestoneBot:
 
 # === Run bot ===
 if __name__ == "__main__":
-    keep_alive()  # Start Flask server for UptimeRobot
+    keep_alive()
     token = os.getenv("DISCORD_TOKEN")
     place_id = "125760703264498"  # Replace with your Roblox place ID
     if not token:
-        print("Error: DISCORD_TOKEN not found in environment variables!")
+        print("Error: DISCORD_TOKEN not found")
         exit(1)
     MilestoneBot(token, place_id).run()
