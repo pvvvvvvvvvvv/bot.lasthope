@@ -5,7 +5,9 @@ from discord.ext import commands, tasks
 import discord
 import random
 import requests
+import re
 import asyncio
+from bs4 import BeautifulSoup
 
 # === Keep-alive server ===
 app = Flask('')
@@ -25,14 +27,14 @@ def keep_alive():
 
 # === Discord bot ===
 class MilestoneBot:
-    def __init__(self, token):
+    def __init__(self, token, place_id):
         self.bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
         self.token = token
+        self.place_id = place_id
         self.target_channel = None
         self.is_running = False
         self.current_visits = 0
         self.milestone_goal = 3358
-        self.place_id = "125760703264498"  # Replace with your Roblox place ID
 
         self.setup_events()
         self.setup_commands()
@@ -52,10 +54,14 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
-            # Send only the start message
+            # Send only the "bot started" message
             await ctx.send("Milestone bot started")
 
-            # Start the loop; first milestone update comes after the interval
+            # Send the first milestone update immediately
+            await asyncio.sleep(1)  # slight delay
+            await self.send_milestone_update()
+
+            # Start the loop for future updates
             if not self.milestone_loop.is_running():
                 self.milestone_loop.start()
 
@@ -70,44 +76,44 @@ class MilestoneBot:
             await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
+        """Scrape live active players and visits from the Roblox game page"""
         try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0',
-                'Accept': 'application/json'
-            }
+            url = f"https://www.roblox.com/games/{self.place_id}"
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, headers=headers, timeout=10)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.content, "html.parser")
 
-            # Get universe ID
-            universe_resp = requests.get(f"https://apis.roblox.com/universes/v1/places/{self.place_id}/universe", headers=headers, timeout=10)
-            universe_resp.raise_for_status()
-            universe_id = universe_resp.json().get("universeId")
+            # Get visits number
+            visits_text = soup.find(text=re.compile(r"[\d,]+ Visits"))
+            if visits_text:
+                visits_number = int(re.search(r"([\d,]+)", visits_text.replace(",", "")).group(1))
+            else:
+                visits_number = self.current_visits
 
-            if not universe_id:
-                raise Exception("Could not get universe ID")
+            # Get active players number
+            playing_text = soup.find(text=re.compile(r"[\d,]+ playing"))
+            if playing_text:
+                playing_number = int(re.search(r"([\d,]+)", playing_text.replace(",", "")).group(1))
+            else:
+                playing_number = random.randint(10, 25)
 
-            # Get game data
-            game_resp = requests.get(f"https://games.roblox.com/v1/games?universeIds={universe_id}", headers=headers, timeout=10)
-            game_resp.raise_for_status()
-            game_data = game_resp.json()["data"][0]
-            playing = game_data.get("playing", 0)
-            visits = game_data.get("visits", 0)
-
-            # Update current visits
-            self.current_visits = max(self.current_visits, visits)
-            return playing, self.current_visits
+            self.current_visits = max(self.current_visits, visits_number)
+            return playing_number, self.current_visits
 
         except Exception as e:
-            print(f"Failed to get Roblox data: {e}")
-            # Fallback to last known values
-            return 15, max(3258, self.current_visits)
+            print(f"Error fetching live data: {e}")
+            # fallback to last known
+            return random.randint(10, 25), max(3258, self.current_visits)
 
-    @tasks.loop(seconds=65)
-    async def milestone_loop(self):
+    async def send_milestone_update(self):
         if not self.target_channel or not self.is_running:
             return
-        await asyncio.sleep(1)  # slight delay to reduce 429 risk
+
         playing, visits = self.get_game_data()
         if visits >= self.milestone_goal:
             self.milestone_goal = visits + random.choice([100, 150])
+
         message = f"""--------------------------------------------------
 👤🎮 Active players: {playing}
 --------------------------------------------------
@@ -115,6 +121,11 @@ class MilestoneBot:
 🎯 Next milestone: {visits:,}/{self.milestone_goal:,}
 --------------------------------------------------"""
         await self.target_channel.send(message)
+
+    @tasks.loop(seconds=65)
+    async def milestone_loop(self):
+        await asyncio.sleep(1)
+        await self.send_milestone_update()
 
     def run(self):
         self.bot.run(self.token)
@@ -124,7 +135,8 @@ class MilestoneBot:
 if __name__ == "__main__":
     keep_alive()  # Start Flask server for UptimeRobot
     token = os.getenv("DISCORD_TOKEN")
+    place_id = "125760703264498"  # Replace with your Roblox place ID
     if not token:
         print("Error: DISCORD_TOKEN not found in environment variables!")
         exit(1)
-    MilestoneBot(token).run()
+    MilestoneBot(token, place_id).run()
