@@ -50,20 +50,12 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
-            await asyncio.sleep(1)  # slight delay to avoid 429 at start
-            playing, visits = self.get_game_data()
-            self.current_visits = max(self.current_visits, visits)
-            message = f"""--------------------------------------------------
-👤🎮 Active players: {playing}
---------------------------------------------------
-👥 Visits: {self.current_visits:,}
-🎯 Next milestone: {self.current_visits:,}/{self.milestone_goal:,}
---------------------------------------------------"""
-            await ctx.send(message)
+            # Send only the start message
+            await ctx.send("Milestone bot started")
 
+            # Start the loop (first milestone update comes after interval)
             if not self.milestone_loop.is_running():
                 self.milestone_loop.start()
-            await ctx.send("Milestone bot started")
 
         @self.bot.command(name='stopms')
         async def stop_milestone(ctx):
@@ -76,14 +68,14 @@ class MilestoneBot:
             await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
-        # TODO: Replace with your actual Roblox game data fetching logic
-        # For now, simulates realistic updates
+        # TODO: Replace with your real Roblox fetching logic
+        # Currently simulates realistic updates
         variation = random.randint(-5, 8)
         playing = max(1, 15 + variation)
         self.current_visits += random.randint(0, 3)
         return playing, self.current_visits
 
-    @tasks.loop(seconds=65)  # change if you want faster updates
+    @tasks.loop(seconds=65)
     async def milestone_loop(self):
         if not self.target_channel or not self.is_running:
             return
@@ -105,7 +97,7 @@ class MilestoneBot:
 
 # === Run bot ===
 if __name__ == "__main__":
-    keep_alive()  # start Flask server for UptimeRobot
+    keep_alive()  # Start Flask server for UptimeRobot
     token = os.getenv("DISCORD_TOKEN")
     if not token:
         print("Error: DISCORD_TOKEN not found in environment variables!")
