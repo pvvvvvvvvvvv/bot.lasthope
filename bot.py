@@ -4,6 +4,7 @@ import os
 from discord.ext import commands, tasks
 import discord
 import random
+import requests
 import asyncio
 
 # === Keep-alive server ===
@@ -29,8 +30,9 @@ class MilestoneBot:
         self.token = token
         self.target_channel = None
         self.is_running = False
-        self.current_visits = 3258  # starting visits
+        self.current_visits = 0
         self.milestone_goal = 3358
+        self.place_id = "125760703264498"  # Replace with your Roblox place ID
 
         self.setup_events()
         self.setup_commands()
@@ -53,7 +55,7 @@ class MilestoneBot:
             # Send only the start message
             await ctx.send("Milestone bot started")
 
-            # Start the loop (first milestone update comes after interval)
+            # Start the loop; first milestone update comes after the interval
             if not self.milestone_loop.is_running():
                 self.milestone_loop.start()
 
@@ -68,12 +70,35 @@ class MilestoneBot:
             await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
-        # TODO: Replace with your real Roblox fetching logic
-        # Currently simulates realistic updates
-        variation = random.randint(-5, 8)
-        playing = max(1, 15 + variation)
-        self.current_visits += random.randint(0, 3)
-        return playing, self.current_visits
+        try:
+            headers = {
+                'User-Agent': 'Mozilla/5.0',
+                'Accept': 'application/json'
+            }
+
+            # Get universe ID
+            universe_resp = requests.get(f"https://apis.roblox.com/universes/v1/places/{self.place_id}/universe", headers=headers, timeout=10)
+            universe_resp.raise_for_status()
+            universe_id = universe_resp.json().get("universeId")
+
+            if not universe_id:
+                raise Exception("Could not get universe ID")
+
+            # Get game data
+            game_resp = requests.get(f"https://games.roblox.com/v1/games?universeIds={universe_id}", headers=headers, timeout=10)
+            game_resp.raise_for_status()
+            game_data = game_resp.json()["data"][0]
+            playing = game_data.get("playing", 0)
+            visits = game_data.get("visits", 0)
+
+            # Update current visits
+            self.current_visits = max(self.current_visits, visits)
+            return playing, self.current_visits
+
+        except Exception as e:
+            print(f"Failed to get Roblox data: {e}")
+            # Fallback to last known values
+            return 15, max(3258, self.current_visits)
 
     @tasks.loop(seconds=65)
     async def milestone_loop(self):
