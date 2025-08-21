@@ -1,7 +1,9 @@
-
 from flask import Flask
 from threading import Thread
 import os
+from discord.ext import commands, tasks
+import discord
+import random
 
 # === Keep-alive server ===
 app = Flask('')
@@ -19,17 +21,6 @@ def keep_alive():
 
 
 # === Discord bot ===
-import discord
-from discord.ext import commands, tasks
-import asyncio
-import logging
-from datetime import datetime
-import random
-import re
-import requests
-from bs4 import BeautifulSoup
-import json
-
 class MilestoneBot:
     def __init__(self, token):
         self.bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
@@ -63,7 +54,6 @@ class MilestoneBot:
                 if visits >= self.milestone_goal:
                     add_amount = random.choice([100, 150])
                     self.milestone_goal = visits + add_amount
-                    print(f"Milestone reached! New goal: {self.milestone_goal:,}")
 
             message = f"""--------------------------------------------------
 👤🎮 Active players: {playing}
@@ -71,7 +61,6 @@ class MilestoneBot:
 👥 Visits: {visits:,}
 🎯 Next milestone: {visits:,}/{self.milestone_goal:,}
 --------------------------------------------------"""
-
             await ctx.send(message)
 
             if not self.milestone_loop.is_running():
@@ -83,15 +72,14 @@ class MilestoneBot:
             if not self.is_running:
                 await ctx.send("Bot is not running!")
                 return
-
             self.is_running = False
             if self.milestone_loop.is_running():
                 self.milestone_loop.cancel()
             await ctx.send("milestone bot stopped.")
 
     def get_game_data(self):
-        # (Keep all your existing get_game_data logic here; omitted for brevity in this snippet)
-        return 15, 3258  # placeholder fallback
+        # Placeholder fallback, replace with your original logic
+        return 15, max(3258, self.current_visits)
 
     @tasks.loop(seconds=65)
     async def milestone_loop(self):
@@ -113,3 +101,13 @@ class MilestoneBot:
 
     def run(self):
         self.bot.run(self.token)
+
+
+# === Run bot ===
+if __name__ == "__main__":
+    keep_alive()  # Start Flask server for Render
+    token = os.getenv("DISCORD_TOKEN")
+    if not token:
+        print("Error: DISCORD_TOKEN not found")
+        exit(1)
+    MilestoneBot(token).run()
