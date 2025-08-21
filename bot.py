@@ -54,16 +54,15 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
-            # Send only the "bot started" message
+            # Send only the start message once
             await ctx.send("Milestone bot started")
 
             # Send the first milestone update immediately
-            await asyncio.sleep(1)  # slight delay
             await self.send_milestone_update()
 
-            # Start the loop for future updates
+            # Start the loop AFTER the first message interval
             if not self.milestone_loop.is_running():
-                self.milestone_loop.start()
+                self.milestone_loop.start(delay_first=True)  # start loop with delay
 
         @self.bot.command(name='stopms')
         async def stop_milestone(ctx):
@@ -84,26 +83,27 @@ class MilestoneBot:
             resp.raise_for_status()
             soup = BeautifulSoup(resp.content, "html.parser")
 
-            # Get visits number
+            # Get visits number safely
             visits_text = soup.find(text=re.compile(r"[\d,]+ Visits"))
             if visits_text:
                 visits_number = int(re.search(r"([\d,]+)", visits_text.replace(",", "")).group(1))
             else:
-                visits_number = self.current_visits
+                visits_number = self.current_visits  # fallback
 
-            # Get active players number
+            # Get active players number safely
             playing_text = soup.find(text=re.compile(r"[\d,]+ playing"))
             if playing_text:
                 playing_number = int(re.search(r"([\d,]+)", playing_text.replace(",", "")).group(1))
             else:
                 playing_number = random.randint(10, 25)
 
+            # Never decrease visits
             self.current_visits = max(self.current_visits, visits_number)
             return playing_number, self.current_visits
 
         except Exception as e:
             print(f"Error fetching live data: {e}")
-            # fallback to last known
+            # fallback to last known values
             return random.randint(10, 25), max(3258, self.current_visits)
 
     async def send_milestone_update(self):
@@ -124,6 +124,7 @@ class MilestoneBot:
 
     @tasks.loop(seconds=65)
     async def milestone_loop(self):
+        """Main loop for milestone updates. Starts after first message to prevent duplicates."""
         await asyncio.sleep(1)
         await self.send_milestone_update()
 
