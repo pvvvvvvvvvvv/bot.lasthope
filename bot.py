@@ -4,6 +4,7 @@ import os
 from discord.ext import commands, tasks
 import discord
 import random
+import asyncio
 
 # === Keep-alive server ===
 app = Flask('')
@@ -13,6 +14,7 @@ def home():
     return "Bot is alive!"
 
 def run_flask():
+    print("Flask server starting...")
     app.run(host='0.0.0.0', port=8080)
 
 def keep_alive():
@@ -27,7 +29,7 @@ class MilestoneBot:
         self.token = token
         self.target_channel = None
         self.is_running = False
-        self.current_visits = 0
+        self.current_visits = 3258  # starting visits
         self.milestone_goal = 3358
 
         self.setup_events()
@@ -48,24 +50,20 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
+            await asyncio.sleep(1)  # slight delay to avoid 429 at start
             playing, visits = self.get_game_data()
-            if visits > 0:
-                self.current_visits = visits
-                if visits >= self.milestone_goal:
-                    add_amount = random.choice([100, 150])
-                    self.milestone_goal = visits + add_amount
-
+            self.current_visits = max(self.current_visits, visits)
             message = f"""--------------------------------------------------
 👤🎮 Active players: {playing}
 --------------------------------------------------
-👥 Visits: {visits:,}
-🎯 Next milestone: {visits:,}/{self.milestone_goal:,}
+👥 Visits: {self.current_visits:,}
+🎯 Next milestone: {self.current_visits:,}/{self.milestone_goal:,}
 --------------------------------------------------"""
             await ctx.send(message)
 
             if not self.milestone_loop.is_running():
                 self.milestone_loop.start()
-            await ctx.send("milestone bot started")
+            await ctx.send("Milestone bot started")
 
         @self.bot.command(name='stopms')
         async def stop_milestone(ctx):
@@ -75,22 +73,24 @@ class MilestoneBot:
             self.is_running = False
             if self.milestone_loop.is_running():
                 self.milestone_loop.cancel()
-            await ctx.send("milestone bot stopped.")
+            await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
-        # Placeholder fallback, replace with your original logic
-        return 15, max(3258, self.current_visits)
+        # TODO: Replace with your actual Roblox game data fetching logic
+        # For now, simulates realistic updates
+        variation = random.randint(-5, 8)
+        playing = max(1, 15 + variation)
+        self.current_visits += random.randint(0, 3)
+        return playing, self.current_visits
 
-    @tasks.loop(seconds=65)
+    @tasks.loop(seconds=65)  # change if you want faster updates
     async def milestone_loop(self):
         if not self.target_channel or not self.is_running:
             return
+        await asyncio.sleep(1)  # slight delay to reduce 429 risk
         playing, visits = self.get_game_data()
-        if visits > 0:
-            self.current_visits = visits
-            if visits >= self.milestone_goal:
-                add_amount = random.choice([100, 150])
-                self.milestone_goal = visits + add_amount
+        if visits >= self.milestone_goal:
+            self.milestone_goal = visits + random.choice([100, 150])
         message = f"""--------------------------------------------------
 👤🎮 Active players: {playing}
 --------------------------------------------------
@@ -105,9 +105,9 @@ class MilestoneBot:
 
 # === Run bot ===
 if __name__ == "__main__":
-    keep_alive()  # Start Flask server for Render
+    keep_alive()  # start Flask server for UptimeRobot
     token = os.getenv("DISCORD_TOKEN")
     if not token:
-        print("Error: DISCORD_TOKEN not found")
+        print("Error: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     MilestoneBot(token).run()
