@@ -3,8 +3,8 @@ from threading import Thread
 import os
 from discord.ext import commands, tasks
 import discord
-import requests
 import random
+import requests
 import asyncio
 import logging
 
@@ -23,8 +23,7 @@ def keep_alive():
     t = Thread(target=run_flask)
     t.start()
 
-
-# === Discord bot ===
+# === Discord Bot ===
 class MilestoneBot:
     def __init__(self, token, place_id):
         self.bot = commands.Bot(command_prefix='!', intents=discord.Intents.all())
@@ -35,8 +34,8 @@ class MilestoneBot:
         self.current_visits = 0
         self.milestone_goal = 3358
 
-        # Enable debug logging
-        logging.basicConfig(level=logging.INFO)
+        # Logging
+        logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 
         self.setup_events()
         self.setup_commands()
@@ -44,7 +43,7 @@ class MilestoneBot:
     def setup_events(self):
         @self.bot.event
         async def on_ready():
-            print(f'Bot logged in as {self.bot.user}')
+            logging.info(f'Bot logged in as {self.bot.user}')
 
     def setup_commands(self):
         @self.bot.command(name='startms')
@@ -56,7 +55,7 @@ class MilestoneBot:
             self.target_channel = ctx.channel
             self.is_running = True
 
-            # Send only the start message
+            # Send only the start message once
             await ctx.send("Milestone bot started")
 
             # Send first milestone update immediately
@@ -77,10 +76,12 @@ class MilestoneBot:
             await ctx.send("Milestone bot stopped")
 
     def get_game_data(self):
-        """Fetches total active players from all servers and accurate visits"""
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
+        """Fetch total players across all servers and accurate visits"""
+        headers = {"User-Agent": "Mozilla/5.0"}
+        total_players = 0
+        visits = self.current_visits
 
+        try:
             # Step 1: Get universe ID
             universe_resp = requests.get(
                 f"https://apis.roblox.com/universes/v1/places/{self.place_id}/universe",
@@ -89,40 +90,41 @@ class MilestoneBot:
             universe_resp.raise_for_status()
             universe_id = universe_resp.json().get("universeId")
             logging.info(f"Universe ID: {universe_id}")
-
             if not universe_id:
-                raise Exception("Could not get universe ID")
+                raise Exception("Cannot get universe ID")
 
-            # Step 2: Get game details for visits
+            # Step 2: Get total visits from universe
             game_resp = requests.get(
                 f"https://games.roblox.com/v1/games?universeIds={universe_id}",
                 headers=headers, timeout=10
             )
             game_resp.raise_for_status()
             game_data = game_resp.json()["data"][0]
-            visits = game_data.get("visits", 0)
-            logging.info(f"Total visits: {visits}")
+            visits = game_data.get("visits", self.current_visits)
+            logging.info(f"Total visits from API: {visits}")
+            self.current_visits = max(self.current_visits, visits)
 
-            # Step 3: Get servers for total players
-            total_players = 0
-            servers_url = f"https://games.roblox.com/v1/games/{self.place_id}/servers/Public?sortOrder=Asc&limit=100"
-            while servers_url:
+            # Step 3: Get total players across all public servers
+            cursor = ""
+            while True:
+                servers_url = f"https://games.roblox.com/v1/games/{self.place_id}/servers/Public?sortOrder=Asc&limit=100"
+                if cursor:
+                    servers_url += f"&cursor={cursor}"
                 server_resp = requests.get(servers_url, headers=headers, timeout=10)
                 server_resp.raise_for_status()
                 server_data = server_resp.json()
-                players = sum(server.get("playing", 0) for server in server_data.get("data", []))
-                total_players += players
-                logging.info(f"Fetched {len(server_data.get('data', []))} servers, total players now {total_players}")
-                # Pagination
-                servers_url = server_data.get("nextPageCursor")
-                if servers_url:
-                    servers_url = f"https://games.roblox.com/v1/games/{self.place_id}/servers/Public?cursor={servers_url}&limit=100"
+                data_list = server_data.get("data", [])
+                server_total = sum(server.get("playing", 0) for server in data_list)
+                total_players += server_total
+                logging.info(f"Fetched {len(data_list)} servers, total players so far: {total_players}")
+                cursor = server_data.get("nextPageCursor")
+                if not cursor:
+                    break
 
-            self.current_visits = max(self.current_visits, visits)
             return total_players, self.current_visits
 
         except Exception as e:
-            logging.error(f"Error fetching Roblox data: {e}")
+            logging.error(f"Error fetching game data: {e}")
             # fallback values
             return random.randint(10, 25), max(3258, self.current_visits)
 
@@ -142,6 +144,7 @@ class MilestoneBot:
 🎯 Next milestone: {visits:,}/{self.milestone_goal:,}
 --------------------------------------------------"""
         try:
+            await asyncio.sleep(1)  # slight delay for rate-limit safety
             await self.target_channel.send(message)
             logging.info(f"Sent milestone update: {players} players, {visits} visits")
         except Exception as e:
@@ -150,7 +153,6 @@ class MilestoneBot:
     @tasks.loop(seconds=65)
     async def milestone_loop(self):
         """Loop for milestone updates."""
-        await asyncio.sleep(1)  # slight delay to prevent rate-limit
         await self.send_milestone_update()
 
     def run(self):
@@ -159,10 +161,10 @@ class MilestoneBot:
 
 # === Run bot ===
 if __name__ == "__main__":
-    keep_alive()
+    keep_alive()  # Start Flask server
     token = os.getenv("DISCORD_TOKEN")
     place_id = "125760703264498"  # Replace with your Roblox place ID
     if not token:
-        print("Error: DISCORD_TOKEN not found")
+        print("Error: DISCORD_TOKEN not found in environment variables!")
         exit(1)
     MilestoneBot(token, place_id).run()
